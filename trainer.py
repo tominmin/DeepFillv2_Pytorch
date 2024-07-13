@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 
 import network
 import train_dataset
-import utils
+import src.utils as utils
 
 def WGAN_trainer(opt):
     # ----------------------------------------
