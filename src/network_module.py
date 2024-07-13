@@ -2,7 +2,6 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.nn import Parameter
-from utils import *
 
 #-----------------------------------------------
 #                Normal ConvBlock
@@ -227,7 +226,8 @@ class SpectralNorm(nn.Module):
         w = getattr(self.module, self.name)
 
         height = w.data.shape[0]
-        width = w.view(height, -1).data.shape[1]
+        # width = w.view(height, -1).data.shape[1]
+        width = w.view(height, int(w.numel() // height)).data.shape[1]
 
         u = Parameter(w.data.new(height).normal_(0, 1), requires_grad=False)
         v = Parameter(w.data.new(width).normal_(0, 1), requires_grad=False)
@@ -287,9 +287,15 @@ class ContextualAttention(nn.Module):
                                       rates=[1, 1],
                                       padding='same') # [N, C*k*k, L]
         # raw_shape: [N, C, k, k, L] [4, 192, 4, 4, 1024]
-        raw_w = raw_w.view(raw_int_bs[0], raw_int_bs[1], kernel, kernel, -1)
+
+        # raw_w = raw_w.view(raw_int_bs[0], raw_int_bs[1], kernel, kernel, -1)
+        _ind = int(raw_w.numel() // (raw_int_bs[0] * raw_int_bs[1] * kernel * kernel))
+        raw_w = raw_w.view(raw_int_bs[0], raw_int_bs[1], kernel, kernel, _ind)
+
         raw_w = raw_w.permute(0, 4, 1, 2, 3)    # raw_shape: [N, L, C, k, k]
-        raw_w_groups = torch.split(raw_w, 1, dim=0)
+
+        # raw_w_groups = torch.split(raw_w, 1, dim=0)
+        raw_w_groups = [raw_w]
 
         # downscaling foreground option: downscaling both foreground and
         # background for matching and use original background for reconstruction.
@@ -297,16 +303,24 @@ class ContextualAttention(nn.Module):
         b = F.interpolate(b, scale_factor=1./self.rate, mode='nearest')
         int_fs = list(f.size())     # b*c*h*w
         int_bs = list(b.size())
-        f_groups = torch.split(f, 1, dim=0)  # split tensors along the batch dimension
+
+        # f_groups = torch.split(f, 1, dim=0)  # split tensors along the batch dimension
+        f_groups = [f]
+
         # w shape: [N, C*k*k, L]
         w = extract_image_patches(b, ksizes=[self.ksize, self.ksize],
                                   strides=[self.stride, self.stride],
                                   rates=[1, 1],
                                   padding='same')
         # w shape: [N, C, k, k, L]
-        w = w.view(int_bs[0], int_bs[1], self.ksize, self.ksize, -1)
+        # w = w.view(int_bs[0], int_bs[1], self.ksize, self.ksize, -1)
+
+        _ind = int(w.numel() // (int_bs[0] * int_bs[1] * self.ksize * self.ksize))
+        w = w.view(int_bs[0], int_bs[1], self.ksize, self.ksize, _ind)
+
         w = w.permute(0, 4, 1, 2, 3)    # w shape: [N, L, C, k, k]
-        w_groups = torch.split(w, 1, dim=0)
+        # w_groups = torch.split(w, 1, dim=0)
+        w_groups = [w]
 
         # process mask
         mask = F.interpolate(mask, scale_factor=1./self.rate, mode='nearest')
@@ -331,7 +345,8 @@ class ContextualAttention(nn.Module):
         scale = self.softmax_scale    # to fit the PyTorch tensor image value range
         fuse_weight = torch.eye(k).view(1, 1, k, k)  # 1*1*k*k
         if self.use_cuda:
-            fuse_weight = fuse_weight.cuda()
+            # fuse_weight = fuse_weight.cuda()
+            fuse_weight = fuse_weight.cpu()
 
         for xi, wi, raw_wi in zip(f_groups, w_groups, raw_w_groups):
             '''
@@ -344,7 +359,8 @@ class ContextualAttention(nn.Module):
             # conv for compare
             escape_NaN = torch.FloatTensor([1e-4])
             if self.use_cuda:
-                escape_NaN = escape_NaN.cuda()
+                # escape_NaN = escape_NaN.cuda()
+                escape_NaN = escape_NaN.cpu()
             wi = wi[0]  # [L, C, k, k]
             max_wi = torch.sqrt(reduce_sum(torch.pow(wi, 2) + escape_NaN, axis=[1, 2, 3], keepdim=True))
             wi_normed = wi / max_wi
@@ -389,3 +405,79 @@ class ContextualAttention(nn.Module):
         y.contiguous().view(raw_int_fs)
 
         return y
+
+
+# ----------------------------------------
+#  For Contextual Attension
+# ----------------------------------------
+def reduce_mean(x, axis=None, keepdim=False):
+    if not axis:
+        axis = range(len(x.shape))
+    for i in sorted(axis, reverse=True):
+        x = torch.mean(x, dim=i, keepdim=keepdim)
+    return x
+
+def reduce_sum(x, axis=None, keepdim=False):
+    if not axis:
+        axis = range(len(x.shape))
+    for i in sorted(axis, reverse=True):
+        x = torch.sum(x, dim=i, keepdim=keepdim)
+    return x
+
+
+def extract_image_patches(images, ksizes, strides, rates, padding='same'):
+    """
+    Extract patches from images and put them in the C output dimension.
+    :param padding:
+    :param images: [batch, channels, in_rows, in_cols]. A 4-D Tensor with shape
+    :param ksizes: [ksize_rows, ksize_cols]. The size of the sliding window for
+     each dimension of images
+    :param strides: [stride_rows, stride_cols]
+    :param rates: [dilation_rows, dilation_cols]
+    :return: A Tensor
+    """
+    assert len(images.size()) == 4
+    assert padding in ['same', 'valid']
+    batch_size, channel, height, width = images.size()
+
+    if padding == 'same':
+        images = same_padding(images, ksizes, strides, rates)
+    elif padding == 'valid':
+        pass
+    else:
+        raise NotImplementedError('Unsupported padding type: {}.\
+                Only "same" or "valid" are supported.'.format(padding))
+
+    unfold = torch.nn.Unfold(kernel_size=ksizes,
+                             dilation=rates,
+                             padding=0,
+                             stride=strides)
+    patches = unfold(images)
+    return patches  # [N, C*k*k, L], L is the total number of such blocks
+
+def same_padding(images, ksizes, strides, rates):
+    assert len(images.size()) == 4
+    batch_size, channel, rows, cols = images.size()
+    out_rows = (rows + strides[0] - 1) // strides[0]
+    out_cols = (cols + strides[1] - 1) // strides[1]
+    effective_k_row = (ksizes[0] - 1) * rates[0] + 1
+    effective_k_col = (ksizes[1] - 1) * rates[1] + 1
+    padding_rows = max(0, (out_rows-1)*strides[0]+effective_k_row-rows)
+    padding_cols = max(0, (out_cols-1)*strides[1]+effective_k_col-cols)
+    # Pad the input
+    padding_top = int(padding_rows / 2.)
+    padding_left = int(padding_cols / 2.)
+    padding_bottom = padding_rows - padding_top
+    padding_right = padding_cols - padding_left
+    paddings = (padding_left, padding_right, padding_top, padding_bottom)
+    images = torch.nn.ZeroPad2d(paddings)(images)
+    return images
+
+
+def reduce_std(x, axis=None, keepdim=False):
+    if not axis:
+        axis = range(len(x.shape))
+    for i in sorted(axis, reverse=True):
+        x = torch.std(x, dim=i, keepdim=keepdim)
+    return x
+

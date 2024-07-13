@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 
 import network
 import test_dataset
-import utils
+import src.utils as utils
 
 
 def WGAN_tester(opt):

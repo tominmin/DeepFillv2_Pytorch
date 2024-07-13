@@ -1,0 +1,36 @@
+[project]
+name = "deepfillv2-pytorch"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "tominmin", email = "fate59133@gmail.com" }
+]
+dependencies = [
+    "torch>=2.3.1",
+    "numpy==1.26.4",
+    "opencv-python>=4.10.0.84",
+    "pillow>=10.4.0",
+    "torchvision>=0.18.1",
+    "scikit-image>=0.24.0",
+    "onnx>=1.16.1",
+    "onnxsim>=0.4.36",
+    "onnxruntime==1.18.1",
+    "jupyterlab>=4.2.3",
+    "matplotlib>=3.9.1",
+]
+readme = "README.md"
+requires-python = ">= 3.11"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.rye]
+managed = true
+dev-dependencies = []
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/deepfillv2_pytorch"]
