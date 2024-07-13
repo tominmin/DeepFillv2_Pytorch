@@ -122,11 +122,3 @@ def ssim(pred, target):
     pred = pred[0]
     ssim = skimage.measure.compare_ssim(target, pred, multichannel = True)
     return ssim
-
-## for contextual attention
-def reduce_std(x, axis=None, keepdim=False):
-    if not axis:
-        axis = range(len(x.shape))
-    for i in sorted(axis, reverse=True):
-        x = torch.std(x, dim=i, keepdim=keepdim)
-    return x

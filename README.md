@@ -1,6 +1,7 @@
 ## DeepFillv2_Pytorch (for convert onnx model)
 forked from https://github.com/csqiangwen/DeepFillv2_Pytorch
 Convert the deepfillv2 PyTorch model to ONNX and quantize it
+The URL of the pretrained model is listed on the original GitHub page
 
 ### how to use
 0. (init project)
